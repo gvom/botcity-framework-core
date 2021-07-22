@@ -664,7 +664,7 @@ public class WebBot {
 			devToolsService.getBrowser().grantPermissions(permissions);
 		}
 		
-		setCerticate();
+//		setCerticate();
 	}
 	
 	public ChromeDevToolsService navigateTo(String uri){
