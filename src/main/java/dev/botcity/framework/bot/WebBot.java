@@ -18,17 +18,29 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
+import java.security.SignatureException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 
 import javax.imageio.ImageIO;
 import javax.swing.ImageIcon;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.marvinproject.framework.image.MarvinImage;
 import org.marvinproject.framework.image.MarvinSegment;
@@ -36,25 +48,33 @@ import org.marvinproject.framework.io.MarvinImageIO;
 import org.marvinproject.framework.plugin.MarvinImagePlugin;
 import org.marvinproject.plugins.image.transform.flip.Flip;
 
+import com.github.kklisura.cdt.launch.ChromeArguments;
 import com.github.kklisura.cdt.launch.ChromeLauncher;
+import com.github.kklisura.cdt.protocol.commands.CSS;
+import com.github.kklisura.cdt.protocol.commands.Fetch;
 import com.github.kklisura.cdt.protocol.commands.Input;
 import com.github.kklisura.cdt.protocol.commands.Network;
 import com.github.kklisura.cdt.protocol.commands.Page;
 import com.github.kklisura.cdt.protocol.commands.Runtime;
+import com.github.kklisura.cdt.protocol.commands.WebAuthn;
 import com.github.kklisura.cdt.protocol.types.browser.Bounds;
 import com.github.kklisura.cdt.protocol.types.browser.PermissionType;
 import com.github.kklisura.cdt.protocol.types.browser.SetDownloadBehaviorBehavior;
 import com.github.kklisura.cdt.protocol.types.browser.WindowState;
-import com.github.kklisura.cdt.protocol.types.dom.Rect;
+import com.github.kklisura.cdt.protocol.types.fetch.HeaderEntry;
 import com.github.kklisura.cdt.protocol.types.input.DispatchKeyEventType;
 import com.github.kklisura.cdt.protocol.types.input.DispatchMouseEventType;
 import com.github.kklisura.cdt.protocol.types.input.MouseButton;
+import com.github.kklisura.cdt.protocol.types.network.Request;
+import com.github.kklisura.cdt.protocol.types.network.RequestPattern;
 import com.github.kklisura.cdt.protocol.types.page.CaptureScreenshotFormat;
+import com.github.kklisura.cdt.protocol.types.page.FontFamilies;
+import com.github.kklisura.cdt.protocol.types.page.FontSizes;
 import com.github.kklisura.cdt.protocol.types.page.LayoutMetrics;
-import com.github.kklisura.cdt.protocol.types.page.LayoutViewport;
 import com.github.kklisura.cdt.protocol.types.page.Viewport;
-import com.github.kklisura.cdt.protocol.types.page.VisualViewport;
 import com.github.kklisura.cdt.protocol.types.runtime.Evaluate;
+import com.github.kklisura.cdt.protocol.types.webauthn.Credential;
+import com.github.kklisura.cdt.protocol.types.webauthn.VirtualAuthenticatorOptions;
 import com.github.kklisura.cdt.services.ChromeDevToolsService;
 import com.github.kklisura.cdt.services.ChromeService;
 import com.github.kklisura.cdt.services.types.ChromeTab;
@@ -84,6 +104,8 @@ public class WebBot {
 	
 	private Map<String, MarvinImage>	mapImages;
 	
+	private static Path chromeBinaryPath = null;
+	
 	private static ChromeLauncher launcher;
 
 	private static ChromeService chromeService;
@@ -93,6 +115,12 @@ public class WebBot {
 	private static ChromeDevToolsService devToolsService;
 
 	private static Page page;
+	
+	private static FontFamilies families;
+	
+	private static FontSizes size;
+	
+	private static CSS css;
 	
 	private static Network network;
 	
@@ -108,7 +136,13 @@ public class WebBot {
 	
 	private static String downloadFolderPath = System.getProperty("user.home") + "/Desktop";
 	
+	private static Map<String, Object> lstParams = new LinkedHashMap<String, Object>();
+	
+	private static Map<String, Object> extraHeaders = new LinkedHashMap<String, Object>();
+	
 	private Dimension scrennSize = new Dimension(1600, 900);
+	
+	private boolean shiftOnHold = false;
 	
 	public WebBot() {		
 		try {
@@ -116,11 +150,130 @@ public class WebBot {
 		} catch(Exception e) {
 			e.printStackTrace();
 		}
-		screen = new MarvinImage(1,1);
 		
+		screen = new MarvinImage(1,1);
+		size = new FontSizes();
+		families = new FontFamilies();
 		flip = new Flip();
+		
 		flip.load();
 		flip.setAttribute("flip", "vertical");
+		
+		families.setSansSerif("Arial");
+		families.setSerif("Times New Roman");
+		families.setCursive("Purisa");
+		families.setFantasy("Sawasdee");
+		families.setFixed("Consolas");
+		families.setPictograph("Helvetica");
+		families.setStandard("Times New Roman");
+		
+		size.setStandard(16);
+	}
+	
+//	public void addCerticate(String password, String pathCertificate) throws IOException, CertificateException, InvalidKeyException, NoSuchAlgorithmException, NoSuchProviderException, SignatureException {
+//		File f = new File(pathCertificate);
+//		if(!f.exists()) {
+//			throw new IOException("The file don't exists.");
+//		}
+//		
+//		byte[] certBytes = FileUtils.readFileToByteArray(f);
+//		
+//		CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
+//		X509Certificate certificateToCheck = (X509Certificate) certificateFactory.generateCertificate(new ByteArrayInputStream(certBytes));
+//		
+//		certificateToCheck.verify(certificateToCheck.getPublicKey());
+//		certificateToCheck.checkValidity();
+//
+//		extraHeaders.put("cert", certBytes);
+//		extraHeaders.put("key", password);
+//		
+//		
+//		if(network != null) {
+//			setCerticate();
+//		}
+//		
+//	}
+//	
+//	private void setCerticate() {	
+//		//Other method
+//		network.setExtraHTTPHeaders(extraHeaders);
+//		
+//		//New method
+//		Fetch fetch = devToolsService.getFetch();
+//		fetch.enable();
+//		fetch.onRequestPaused(event -> {
+//			try {
+//				
+//				List<HeaderEntry> headersOut = new ArrayList<HeaderEntry>();
+//				Map<String, Object> headersIn = event.getRequest().getHeaders();
+//				
+//				headersIn.putAll(extraHeaders);
+//				for (Entry<String, Object> pair : headersIn.entrySet()) {
+//					HeaderEntry entry = new HeaderEntry();
+//					entry.setName(pair.getKey());
+//					entry.setValue(pair.getValue().toString());
+//					headersOut.add(entry);
+//					System.out.println(pair.getKey() + " : " + pair.getValue().toString() + "\n");
+//				}
+//				
+//				Request r = event.getRequest();
+//				fetch.continueRequest(event.getRequestId(), r.getUrl(), r.getMethod(), r.getPostData(), headersOut);			
+//			}catch (Exception e) {
+//				e.printStackTrace();
+//			}
+//		});
+//		
+//		//Deprecated method
+//		network.onRequestIntercepted(
+//		        event -> {
+//		          String interceptionId = event.getInterceptionId();
+//		          
+//		          if (!event.getIsNavigationRequest()) {
+//		        	  	network.continueInterceptedRequest(interceptionId);
+//						return;
+//					}
+//		          
+//		          Map<String, Object> headers = event.getRequest().getHeaders();
+//		          headers.putAll(extraHeaders);
+//		          for (Entry<String, Object> pair : headers.entrySet()) {
+//						System.out.println(pair.getKey() + " : " + pair.getValue().toString() + "\n");
+//					}
+//
+//		          network.continueInterceptedRequest(
+//		              interceptionId, null, null, null, null, null, headers, null);
+//		        });
+//		 RequestPattern interceptionRequestPattern = new RequestPattern();
+//		 network.setRequestInterception(Collections.singletonList(interceptionRequestPattern));
+//	}
+	
+	public void setLaucherParams(String...params) throws IOException {
+		for(String param : params) {
+			if(param.contains("--")) {
+				String key = "";
+				Object value = "";
+				key = param.replaceFirst("--", "").split("=")[0];
+				if(param.contains("=")) {
+					value = param.split("=")[1];
+				}else {
+					value = true;
+				}
+				lstParams.put(key, value);
+			}else {
+				throw new IOException("Invalid lancher param.");
+			}
+		}
+	}
+	
+	public void dismissDialog() {
+		page.handleJavaScriptDialog(true);
+	}
+	
+	public void dismissDialog(String promptText) {
+		page.handleJavaScriptDialog(true, promptText);
+	}
+	
+	public void setChromeBinaryPath(String chromeBinaryPath) {
+		this.chromeBinaryPath = Paths.get(chromeBinaryPath);
 	}
 	
 	public void setColorSensibility(double colorSensibility) {
@@ -250,12 +403,17 @@ public class WebBot {
 			firstTab = false;
 		}
 		devToolsService = chromeService.createDevToolsService(tab);
+		css = devToolsService.getCSS();
+		css.setLocalFontsEnabled(false);
 		page = devToolsService.getPage();
 		network = devToolsService.getNetwork();
 		input = devToolsService.getInput();
 		network.enable();
 		run = devToolsService.getRuntime();
 		run.enable();
+		setDownloadFolder(this.downloadFolderPath);
+		page.setFontFamilies(families);
+		page.setFontSizes(size);
 		
 		List<PermissionType> permissions = new ArrayList<PermissionType>();
 		permissions.add(PermissionType.CLIPBOARD_READ_WRITE);
@@ -304,12 +462,17 @@ public class WebBot {
 			chromeService.activateTab(tabs.get(index));
 			
 			devToolsService = chromeService.createDevToolsService(tabs.get(index));
+			css = devToolsService.getCSS();
+			css.setLocalFontsEnabled(false);
 			page = devToolsService.getPage();
 			network = devToolsService.getNetwork();
 			input = devToolsService.getInput();
 			network.enable();
 			run = devToolsService.getRuntime();
 			run.enable();
+			setDownloadFolder(this.downloadFolderPath);
+			page.setFontFamilies(families);
+			page.setFontSizes(size);
 			
 			List<PermissionType> permissions = new ArrayList<PermissionType>();
 			permissions.add(PermissionType.CLIPBOARD_READ_WRITE);
@@ -439,8 +602,23 @@ public class WebBot {
 		if(launcher == null)
 			launcher = new ChromeLauncher();
 		
-		if(chromeService == null)
-			chromeService = launcher.launch(headless);
+		if(chromeService == null) {
+			if(chromeBinaryPath == null) {
+				chromeService = launcher.launch(ChromeArguments.defaults(headless)
+						.additionalArguments("font-render-hinting", "none")
+						.additionalArguments("disable-system-font-check", true)
+						.additionalArguments("disable-font-subpixel-positioning", true)
+						.additionalArguments(lstParams)
+						.build());
+			}else {
+				chromeService = launcher.launch(chromeBinaryPath, ChromeArguments.defaults(headless)
+						.additionalArguments("font-render-hinting", "none")
+						.additionalArguments("disable-system-font-check", true)
+						.additionalArguments("disable-font-subpixel-positioning", true)
+						.additionalArguments(lstParams)
+						.build());
+			}
+		}
 		
 		List<ChromeTab> lstTabs = chromeService.getTabs();
 		if(devToolsService == null) {
@@ -453,6 +631,8 @@ public class WebBot {
 		
 		if(devToolsService == null) {
 			devToolsService = chromeService.createDevToolsService(tab);
+			css = devToolsService.getCSS();
+			css.setLocalFontsEnabled(false);
 			page = devToolsService.getPage();
 			network = devToolsService.getNetwork();
 			input = devToolsService.getInput();
@@ -462,6 +642,8 @@ public class WebBot {
 			devToolsService.getAccessibility().enable();
 			devToolsService.getApplicationCache().enable();
 			setDownloadFolder(this.downloadFolderPath);
+			page.setFontFamilies(families);
+			page.setFontSizes(size);
 		
 			List<PermissionType> permissions = new ArrayList<PermissionType>();
 			permissions.add(PermissionType.CLIPBOARD_READ_WRITE);
@@ -481,6 +663,8 @@ public class WebBot {
 			permissions.add(PermissionType.PAYMENT_HANDLER);		
 			devToolsService.getBrowser().grantPermissions(permissions);
 		}
+		
+		setCerticate();
 	}
 	
 	public ChromeDevToolsService navigateTo(String uri){
@@ -519,10 +703,6 @@ public class WebBot {
 	
 	
 	static int id=0;
-//	public boolean findUntil(String elementImage, int maxWaitingTime) {
-//		visualElem = MarvinImageIO.loadImage(elementImage);
-//		return findUntil(visualElem, maxWaitingTime);
-//	}
 	
 	public boolean findText(String elementId,int maxWaitingTime, boolean best) {
 		return findText(elementId, getImageFromMap(elementId), null, maxWaitingTime, best);
@@ -917,8 +1097,7 @@ public class WebBot {
 		executeJavascript("var elementfocused = document.activeElement; function copyStringToClipboard(str) { var el = document.createElement('textarea'); el.value = str; el.setAttribute('readonly', ''); el.style = { position: 'absolute', left: '-9999px' }; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); }copyStringToClipboard('"+text+"'); elementfocused.focus();");
 		sleep(1000);
 		String[] commands = {"Paste"};
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		commands(commands);
 		sleep(waitAfter);
 	}
 	
@@ -933,13 +1112,8 @@ public class WebBot {
 	}
 	
 	public void copyToClipboard(String text) throws Exception {
-		if(!headless) {
-			StringSelection stringSelection = new StringSelection(text);
-			Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-			clipboard.setContents(stringSelection, null);
-		}else {
-			throw new Exception("The clipboard functionality is only avaliable out of Headless mode.");
-		}
+		executeJavascript("var elementfocused = document.activeElement; function copyStringToClipboard(str) { var el = document.createElement('textarea'); el.value = str; el.setAttribute('readonly', ''); el.style = { position: 'absolute', left: '-9999px' }; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); }copyStringToClipboard('"+text+"'); elementfocused.focus();");
+		sleep(1000);
 	}
 	
 	private void moveAndclick(int count) {
@@ -954,8 +1128,7 @@ public class WebBot {
 	}
 	
 	public void tab() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "Tab", 9, 9, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("Tab", 9);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -965,8 +1138,7 @@ public class WebBot {
 	}
 	
 	public void keyRight() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "Right", KeyEvent.VK_RIGHT, KeyEvent.VK_RIGHT, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("Right", KeyEvent.VK_RIGHT);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -976,7 +1148,7 @@ public class WebBot {
 	}
 	
 	public void enter() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, "\r", "\r", null, null, "Enter", 13, 13, null, null, null, null, null);
+		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, (shiftOnHold ? 8 : null), null, "\r", "\r", null, null, "Enter", 13, 13, null, null, null, null, null);
 		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
 		sleep(defaultSleepAfterAction);
 	}
@@ -987,8 +1159,7 @@ public class WebBot {
 	}
 	
 	public void keyEnd() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "End", KeyEvent.VK_END, KeyEvent.VK_END, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("End", KeyEvent.VK_END);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -998,8 +1169,7 @@ public class WebBot {
 	}
 	
 	public void keyEsc() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "Escape", KeyEvent.VK_ESCAPE, KeyEvent.VK_ESCAPE, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("Escape", KeyEvent.VK_ESCAPE);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1008,18 +1178,18 @@ public class WebBot {
 		sleep(waitAfter);
 	}
 	
-	public void keyF1() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F1", KeyEvent.VK_F1, KeyEvent.VK_F1, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF2() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F2", KeyEvent.VK_F2, KeyEvent.VK_F2, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF3() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F3", KeyEvent.VK_F3, KeyEvent.VK_F3, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF4() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F4", KeyEvent.VK_F4, KeyEvent.VK_F4, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF5() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F5", KeyEvent.VK_F5, KeyEvent.VK_F5, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF6() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F6", KeyEvent.VK_F6, KeyEvent.VK_F6, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF7() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F7", KeyEvent.VK_F7, KeyEvent.VK_F7, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF8() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F8", KeyEvent.VK_F8, KeyEvent.VK_F8, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF9() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F9", KeyEvent.VK_F9, KeyEvent.VK_F9, null, null, null, null, null);		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF10() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F10", KeyEvent.VK_F10, KeyEvent.VK_F10, null, null, null, null, null);	input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF11() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F11", KeyEvent.VK_F11, KeyEvent.VK_F11, null, null, null, null, null);	input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
-	public void keyF12() {					input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "F12", KeyEvent.VK_F12, KeyEvent.VK_F12, null, null, null, null, null);	input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);	sleep(defaultSleepAfterAction);}
+	public void keyF1() {					keyPress("F1", KeyEvent.VK_F1);	sleep(defaultSleepAfterAction);}
+	public void keyF2() {					keyPress("F2", KeyEvent.VK_F2);	sleep(defaultSleepAfterAction);}
+	public void keyF3() {					keyPress("F3", KeyEvent.VK_F3);	sleep(defaultSleepAfterAction);}
+	public void keyF4() {					keyPress("F4", KeyEvent.VK_F4);	sleep(defaultSleepAfterAction);}
+	public void keyF5() {					keyPress("F5", KeyEvent.VK_F5);	sleep(defaultSleepAfterAction);}
+	public void keyF6() {					keyPress("F6", KeyEvent.VK_F6);	sleep(defaultSleepAfterAction);}
+	public void keyF7() {					keyPress("F7", KeyEvent.VK_F7);	sleep(defaultSleepAfterAction);}
+	public void keyF8() {					keyPress("F8", KeyEvent.VK_F8);	sleep(defaultSleepAfterAction);}
+	public void keyF9() {					keyPress("F9", KeyEvent.VK_F9);	sleep(defaultSleepAfterAction);}
+	public void keyF10() {					keyPress("F10", KeyEvent.VK_F10);	sleep(defaultSleepAfterAction);}
+	public void keyF11() {					keyPress("F11", KeyEvent.VK_F11);	sleep(defaultSleepAfterAction);}
+	public void keyF12() {					keyPress("F12", KeyEvent.VK_F12);	sleep(defaultSleepAfterAction);}
 	
 	public void keyF1(int waitAfter) 	{	keyF1();	sleep(waitAfter);	}
 	public void keyF2(int waitAfter) 	{	keyF2();	sleep(waitAfter);	}
@@ -1034,62 +1204,48 @@ public class WebBot {
 	public void keyF11(int waitAfter) 	{	keyF11();	sleep(waitAfter);	}
 	public void keyF12(int waitAfter) 	{	keyF12();	sleep(waitAfter);	}
 	
-//	public void holdShift() {
-//		robot.keyPress(KeyEvent.VK_SHIFT);
-//	}
-//	
-//	public void holdShift(int waitAfter) {
-//		robot.keyPress(KeyEvent.VK_SHIFT);
-//		sleep(waitAfter);
-//	}
-//	
-//	public void releaseShift() {
-//		robot.keyRelease(KeyEvent.VK_SHIFT);
-//	}
+	public void holdShift() {
+		shiftOnHold = true;
+	}
+	
+	public void holdShift(int waitAfter) {
+		shiftOnHold = true;
+		sleep(waitAfter);
+	}
+	
+	public void releaseShift() {
+		shiftOnHold = false;
+	}
 	
 	public void typeKeys(Integer... keys) {
 		// Press
 		for(int i=0; i<keys.length; i++){
-			Field[] fields = java.awt.event.KeyEvent.class.getDeclaredFields();
-			for (Field f : fields) {
-			    if (Modifier.isStatic(f.getModifiers())) {
-			        input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, f.getName(), keys[i], keys[i], null, null, null, null, null);
-			    } 
-			}
+			input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, (shiftOnHold ? 8 : null), null, null, null, null, null, KeyEvent.getKeyText(keys[i]), keys[i], keys[i], null, null, null, null, null);
 			sleep(100);
 		}
 		
 		// release
 		for(int i=keys.length-1; i>=0; i--){
-			Field[] fields = java.awt.event.KeyEvent.class.getDeclaredFields();
-			for (Field f : fields) {
-			    if (Modifier.isStatic(f.getModifiers())) {
-			        input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP, null, null, null, null, null, null, f.getName(), keys[i], keys[i], null, null, null, null, null);
-			    } 
-			}
+			input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP, null, null, null, null, null, null, KeyEvent.getKeyText(keys[i]), keys[i], keys[i], null, null, null, null, null);
 			sleep(100);
 		}
 	}
 	
-//	public void altE() {
-//		robot.keyPress(KeyEvent.VK_ALT);
-//		robot.keyPress(KeyEvent.VK_E);
-//		robot.keyRelease(KeyEvent.VK_E);
-//		robot.keyRelease(KeyEvent.VK_ALT);
-//		sleep(defaultSleepAfterAction);
-//	}
-//	
-//	public void altE(int waitAfter) {
-//		altE();
-//		sleep(waitAfter);
-//	}
+	public void altE() {
+		keyPress(1, "E", KeyEvent.VK_E);
+		sleep(defaultSleepAfterAction);
+	}
+	
+	public void altE(int waitAfter) {
+		altE();
+		sleep(waitAfter);
+	}
 		
 	public void controlC() {
 		executeJavascript("var text = ''; if (window.getSelection) { text = window.getSelection().toString(); } else if (document.selection && document.selection.type != 'Control') { text = document.selection.createRange().text; }");
 		executeJavascript("if( null == document.getElementById('clipboardTransferText')){ let el = document.createElement('textarea'); el.value = ''; el.setAttribute('readonly', ''); el.style = {position: 'absolute', left: '-9999px'}; el.id = 'clipboardTransferText'; document.body.appendChild(el); } document.getElementById('clipboardTransferText').value = text;");
 		String[] commands = {"Copy"};
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		commands(commands);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1100,15 +1256,13 @@ public class WebBot {
 	
 	public void controlV() {
 		String[] commands = {"Paste"};
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		commands(commands);
 		sleep(defaultSleepAfterAction);
 	}
 	
 	public void controlA() {
 		String[] commands = {"SelectAll"};
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		commands(commands);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1119,9 +1273,7 @@ public class WebBot {
 	
 	public void scrollToEndOfDocument() {
 		String[] commands = {"ScrollToEndOfDocument"};
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
-		sleep(500);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		commands(commands);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1137,17 +1289,13 @@ public class WebBot {
 	
 	public void scrollToBeginningOfDocument() {
 		String[] commands = {"ScrollToBeginningOfDocument"};
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
-		sleep(500);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		commands(commands);
 		sleep(defaultSleepAfterAction);
 	}
 	
 	public void scrollPageForward() {
 		String[] commands = {"ScrollPageForward"};
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
-		sleep(500);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		commands(commands);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1163,77 +1311,60 @@ public class WebBot {
 	
 	public void scrollPageBackward() {
 		String[] commands = {"ScrollPageBackward"};
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
-		sleep(500);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		commands(commands);
 		sleep(defaultSleepAfterAction);
 	}
 	
-//	public void controlF() {
-//		robot.keyPress(KeyEvent.VK_CONTROL);
-//		robot.keyPress(KeyEvent.VK_F);
-//		robot.keyRelease(KeyEvent.VK_F);
-//		robot.keyRelease(KeyEvent.VK_CONTROL);
-//		sleep(defaultSleepAfterAction);
-//	}
-//	
-//	public void controlF(int waitAfter) {
-//		controlF();
-//		sleep(waitAfter);
-//	}
-//	
-//	public void controlP() {
-//		robot.keyPress(KeyEvent.VK_CONTROL);
-//		robot.keyPress(KeyEvent.VK_P);
-//		robot.keyRelease(KeyEvent.VK_P);
-//		robot.keyRelease(KeyEvent.VK_CONTROL);
-//		sleep(defaultSleepAfterAction);
-//	}
-//	
-//	public void controlP(int waitAfter) {
-//		controlP();
-//		sleep(waitAfter);
-//	}
-//	
-//	public void controlU() {
-//		robot.keyPress(KeyEvent.VK_CONTROL);
-//		robot.keyPress(KeyEvent.VK_U);
-//		robot.keyRelease(KeyEvent.VK_U);
-//		robot.keyRelease(KeyEvent.VK_CONTROL);
-//		sleep(defaultSleepAfterAction);
-//	}
-//	
-//	public void controlU(int waitAfter) {
-//		controlU();
-//		sleep(waitAfter);
-//	}
-//	
-//	public void controlR() {
-//		robot.keyPress(KeyEvent.VK_CONTROL);
-//		robot.keyPress(KeyEvent.VK_R);
-//		robot.keyRelease(KeyEvent.VK_R);
-//		robot.keyRelease(KeyEvent.VK_CONTROL);
-//		sleep(defaultSleepAfterAction);
-//	}
-//	
-//	public void controlR(int waitAfter) {
-//		controlR();
-//		sleep(waitAfter);
-//	}
-//	
-//	public void controlEnd() {
-//		robot.keyPress(KeyEvent.VK_CONTROL);
-//		robot.keyPress(KeyEvent.VK_END);
-//		robot.keyRelease(KeyEvent.VK_END);
-//		robot.keyRelease(KeyEvent.VK_CONTROL);
-//		sleep(defaultSleepAfterAction);
-//	}
-//	
-//	public void controlEnd(int waitAfter) {
-//		controlEnd();
-//		sleep(waitAfter);
-//	}
-//	
+	public void controlF() {
+		keyPress(2, "F", KeyEvent.VK_F);
+		sleep(defaultSleepAfterAction);
+	}
+	
+	public void controlF(int waitAfter) {
+		controlF();
+		sleep(waitAfter);
+	}
+	
+	public void controlP() {
+		keyPress(2, "P", KeyEvent.VK_P);
+		sleep(defaultSleepAfterAction);
+	}
+	
+	public void controlP(int waitAfter) {
+		controlP();
+		sleep(waitAfter);
+	}
+	
+	public void controlU() {
+		keyPress(2, "U", KeyEvent.VK_U);
+		sleep(defaultSleepAfterAction);
+	}
+	
+	public void controlU(int waitAfter) {
+		controlU();
+		sleep(waitAfter);
+	}
+	
+	public void controlR() {
+		keyPress(2, "R", KeyEvent.VK_R);
+		sleep(defaultSleepAfterAction);
+	}
+	
+	public void controlR(int waitAfter) {
+		controlR();
+		sleep(waitAfter);
+	}
+	
+	public void controlEnd() {
+		keyPress(2, "End", KeyEvent.VK_END);
+		sleep(defaultSleepAfterAction);
+	}
+	
+	public void controlEnd(int waitAfter) {
+		controlEnd();
+		sleep(waitAfter);
+	}
+	
 //	public void controlShiftP() {
 //		robot.keyPress(KeyEvent.VK_CONTROL);
 //		robot.keyPress(KeyEvent.VK_SHIFT);
@@ -1263,19 +1394,18 @@ public class WebBot {
 //		controlShiftJ();
 //		sleep(waitAfter);
 //	}
-//	
-//	public void shiftTab() {
-//		robot.keyPress(KeyEvent.VK_SHIFT);
-//		robot.keyPress(KeyEvent.VK_TAB);
-//		robot.keyRelease(KeyEvent.VK_TAB);
-//		robot.keyRelease(KeyEvent.VK_SHIFT);
-//		sleep(defaultSleepAfterAction);
-//	}
-//	
-//	public void shiftTab(int waitAfter) {
-//		shiftTab();
-//		sleep(waitAfter);
-//	}
+	
+	public void shiftTab() {
+		holdShift();
+		tab();
+		releaseShift();
+		sleep(defaultSleepAfterAction);
+	}
+	
+	public void shiftTab(int waitAfter) {
+		shiftTab();
+		sleep(waitAfter);
+	}
 	
 	public String getClipboard(){
 		String text = "";
@@ -1297,8 +1427,7 @@ public class WebBot {
 	}
 	
 	public void typeLeft() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "Left", KeyEvent.VK_LEFT, KeyEvent.VK_LEFT, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("Left", KeyEvent.VK_LEFT);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1308,8 +1437,7 @@ public class WebBot {
 	}
 	
 	public void typeDown() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "Down", KeyEvent.VK_DOWN, KeyEvent.VK_DOWN, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("Down", KeyEvent.VK_DOWN);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1319,13 +1447,12 @@ public class WebBot {
 	}
 	
 	public void typeUp() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "Up", KeyEvent.VK_UP, KeyEvent.VK_UP, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("Up", KeyEvent.VK_UP);
 		sleep(defaultSleepAfterAction);
 	}
 	
 	public void space() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, " ", null, null, null, "Space", KeyEvent.VK_SPACE, KeyEvent.VK_SPACE, null, null, null, null, null);
+		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, (shiftOnHold ? 8 : null), null, " ", null, null, null, "Space", KeyEvent.VK_SPACE, KeyEvent.VK_SPACE, null, null, null, null, null);
 		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
 		sleep(defaultSleepAfterAction);
 	}
@@ -1336,8 +1463,7 @@ public class WebBot {
 	}
 	
 	public void backspace() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "Back Space", KeyEvent.VK_BACK_SPACE, KeyEvent.VK_BACK_SPACE, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("Back Space", KeyEvent.VK_BACK_SPACE);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1348,8 +1474,7 @@ public class WebBot {
 	}
 
 	public void delete() {
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, "Delete", KeyEvent.VK_DELETE, KeyEvent.VK_DELETE, null, null, null, null, null);
-		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+		keyPress("Delete", KeyEvent.VK_DELETE);
 		sleep(defaultSleepAfterAction);
 	}
 	
@@ -1381,10 +1506,7 @@ public class WebBot {
 		
 		String data = "";
 		try {
-			//Version 4.0
-			data = page.captureScreenshot(CaptureScreenshotFormat.PNG, 100, viewport, Boolean.TRUE, Boolean.TRUE);
-			//Version 3.0
-			//data = page.captureScreenshot(CaptureScreenshotFormat.PNG, 100, viewport, Boolean.TRUE);
+			data = page.captureScreenshot(CaptureScreenshotFormat.PNG, 100, viewport, Boolean.TRUE, Boolean.FALSE);
 		} catch (Exception e) {
 			return getScreenImage();
 		}
@@ -1491,8 +1613,6 @@ public class WebBot {
 		return null;
 	}
 	
-	//findSubimage(sub, screen, startX, startY, matching);
-	
 	
 	public MarvinSegment findSubimage
 	(
@@ -1527,11 +1647,6 @@ public class WebBot {
 		MarvinSegment bestSegment=null;
 		
 		int r1,g1,b1,r2,g2,b2;
-//		System.out.println("start - X: "+ startX + " Y: "+startY);
-//		System.out.println("imgIn: largura: "+imageIn.getWidth()+" - altura: "+ imageIn.getHeight());
-//		System.out.println("altura: "+ searchWindowHeight);
-//		System.out.println("largura: "+ searchWindowWidth);
-		// Full image
 		
 		int colorThreshold = (int)(255 * colorSensibility);
 		
@@ -1600,5 +1715,19 @@ public class WebBot {
 		}
 		
 		return bestSegment;
+	}
+	
+	private void commands(String[] commands) {
+		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, Arrays.asList(commands));
+		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+	}
+	
+	private void keyPress(String keyName, int keyIdentifier) {
+		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, (shiftOnHold ? 8 : null), null, null, null, null, null, keyName, keyIdentifier, keyIdentifier, null, null, null, null, null);
+		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
+	}
+	private void keyPress(int holdKey, String keyName, int keyIdentifier) {
+		input.dispatchKeyEvent(DispatchKeyEventType.KEY_DOWN, holdKey, null, null, null, null, null, keyName, keyIdentifier, keyIdentifier, null, null, null, null, null);
+		input.dispatchKeyEvent(DispatchKeyEventType.KEY_UP);
 	}
 }
